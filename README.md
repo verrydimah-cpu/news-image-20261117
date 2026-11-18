@@ -17,7 +17,7 @@ The poster covers the day's biggest stories:
 - The U.S. losing its measles-free status
 - The COP31 draft deal in Antalya
 
-The poster was made as `poster.html` — a hand-built composition of inline SVG illustrations with real rendered text — and rendered to `entry.png` with `render.mjs` (Playwright screenshot at exactly 1024×1024). Every label on the poster is genuine typeset text, so the whole front page stays crisp and legible even when shrunk to a thumbnail.
+The poster's hero is a real Three.js (WebGL) isometric 3D diorama of the Strait of Hormuz — extruded coastlines for Iran and Oman, Qeshm Island, the Bandar Abbas port cranes, detailed tankers (one ablaze, with flame, smoke and firelight), a U.S. Navy destroyer and glowing strike arcs — built and rendered inside `poster.html` alongside hand-built inline SVG panel illustrations. Labels on the diorama are typeset HTML with leader lines, never rendered lettering. `render.mjs` serves the page locally, captures it at 2× (2048×2048) and downscales to exactly 1024×1024, so every headline stays crisp and legible even when shrunk to a thumbnail.
 
 ## Run it
 
