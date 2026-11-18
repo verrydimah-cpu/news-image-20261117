@@ -41,22 +41,28 @@
   }
   .hero-art {
     position: relative; height: 262px; overflow: hidden;
-    background: radial-gradient(900px 340px at 50% 118%, #175d7d 0%, #0d3a56 55%, #081e30 100%);
+    background: linear-gradient(180deg, #7e97a9 0%, #d9b98c 52%, #2c4a5e 100%);
   }
   .hero-art canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .hero-art .grade {
+    position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    background:
+      linear-gradient(180deg, rgba(255,176,102,.10) 0%, rgba(255,176,102,0) 34%),
+      radial-gradient(125% 95% at 50% 42%, rgba(0,0,0,0) 56%, rgba(14,9,5,.30) 100%);
+  }
   .hero-art svg.leaders { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; }
   .lbl {
     position: absolute; z-index: 3;
-    background: rgba(7,22,36,.88); color: #fff;
-    font-size: 13.5px; font-weight: 800; letter-spacing: 2px;
-    padding: 5px 10px 4px; border: 1.5px solid rgba(255,255,255,.55); border-radius: 3px;
-    box-shadow: 0 3px 8px rgba(0,0,0,.5); white-space: nowrap;
+    background: rgba(8,18,28,.85); color: #fff;
+    font-size: 12px; font-weight: 700; letter-spacing: 1.6px;
+    padding: 3px 8px 2px; border: 1px solid rgba(255,255,255,.42); border-radius: 2px;
+    box-shadow: 0 2px 6px rgba(0,0,0,.45); white-space: nowrap;
   }
-  .lbl.hot { background: rgba(178,34,24,.92); }
+  .lbl.hot { background: rgba(165,30,20,.92); }
   #lblQeshm   { top: 4%;  left: 73%; }
   #lblTanker  { top: 3%;  left: 30%; }
-  #lblPort    { top: 35%; left: 42%; }
-  #lblNavy    { top: 40%; left: 4%; }
+  #lblPort    { top: 31%; left: 75.5%; }
+  #lblNavy    { top: 29%; left: 3%; }
   #lblHormuz  { bottom: 3%; right: 2.5%; }
   .hero-text { padding: 8px 18px 9px 18px; }
   .hero-head {
@@ -129,18 +135,19 @@
   <div class="hero">
     <div class="hero-art" id="heroArt">
       <canvas id="gl"></canvas>
+      <div class="grade"></div>
       <svg class="leaders" viewBox="0 0 974 262" preserveAspectRatio="none" aria-hidden="true">
-        <g stroke="#ffffff" stroke-width="2" opacity="0.9">
-          <line id="lnQeshm"  x1="738" y1="38"  x2="674" y2="164"/>
-          <line id="lnTanker" x1="395" y1="36"  x2="448" y2="112"/>
-          <line id="lnPort"   x1="595" y1="115" x2="642" y2="140"/>
-          <line id="lnNavy"   x1="222" y1="118" x2="306" y2="66"/>
+        <g stroke="#ffffff" stroke-width="1.5" opacity="0.85">
+          <line id="lnQeshm"  x1="724" y1="36" x2="649" y2="144"/>
+          <line id="lnTanker" x1="452" y1="32" x2="460" y2="98"/>
+          <line id="lnPort"   x1="738" y1="94" x2="699" y2="100"/>
+          <line id="lnNavy"   x1="230" y1="86" x2="289" y2="72"/>
         </g>
         <g fill="#ffffff">
-          <circle id="dtQeshm"  cx="674" cy="164" r="4"/>
-          <circle id="dtTanker" cx="448" cy="112" r="4"/>
-          <circle id="dtPort"   cx="642" cy="140" r="4"/>
-          <circle id="dtNavy"   cx="306" cy="66"  r="4"/>
+          <circle id="dtQeshm"  cx="649" cy="144" r="3"/>
+          <circle id="dtTanker" cx="460" cy="98"  r="3"/>
+          <circle id="dtPort"   cx="699" cy="100" r="3"/>
+          <circle id="dtNavy"   cx="289" cy="72"  r="3"/>
         </g>
       </svg>
       <div class="lbl" id="lblQeshm">QESHM ISLAND</div>
@@ -344,30 +351,122 @@ function init() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  /* photographic finish: filmic tone curve, slightly lifted exposure —
+     warm highlights / cool shadows come from the light rig below */
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.12;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a2c44);
+
+  /* ---- deterministic helpers (seeded PRNG + value noise) ---- */
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  /* soft mottled-paint helper: base fill + radial colour patches + speckle.
+     patches: [hexColor, alpha, rMin, rMax, count]; speckle: [hex, alpha, count, len] */
+  function rgba(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+  function mottle(ctx, size, base, patches, rng, speckle) {
+    ctx.fillStyle = base; ctx.fillRect(0, 0, size, size);
+    for (const [color, alpha, rMin, rMax, count] of patches) {
+      for (let i = 0; i < count; i++) {
+        const x = rng() * size, y = rng() * size, r = rMin + rng() * (rMax - rMin);
+        const gr = ctx.createRadialGradient(x, y, 0, x, y, r);
+        gr.addColorStop(0, rgba(color, alpha));
+        gr.addColorStop(1, rgba(color, 0));
+        ctx.fillStyle = gr;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+      }
+    }
+    if (speckle) {
+      const [sColor, sAlpha, sCount, sLen] = speckle;
+      ctx.strokeStyle = rgba(sColor, sAlpha); ctx.lineWidth = 1;
+      for (let i = 0; i < sCount; i++) {
+        const x = rng() * size, y = rng() * size, a = rng() * Math.PI;
+        ctx.beginPath(); ctx.moveTo(x, y);
+        ctx.lineTo(x + Math.cos(a) * sLen, y + Math.sin(a) * sLen); ctx.stroke();
+      }
+    }
+  }
+
+  /* ---- sky: screen-space golden-hour gradient with a soft sun glow ---- */
+  {
+    const sc = document.createElement('canvas'); sc.width = 1024; sc.height = 512;
+    const sg = sc.getContext('2d');
+    const grad = sg.createLinearGradient(0, 0, 0, 512);
+    grad.addColorStop(0.0, '#46617c');
+    grad.addColorStop(0.34, '#7d94a8');
+    grad.addColorStop(0.55, '#c8a37e');
+    grad.addColorStop(0.66, '#f0bd84');
+    grad.addColorStop(0.74, '#e8a96f');
+    grad.addColorStop(1.0, '#8a6a52');
+    sg.fillStyle = grad; sg.fillRect(0, 0, 1024, 512);
+    const glow = sg.createRadialGradient(300, 348, 8, 300, 348, 330);
+    glow.addColorStop(0, 'rgba(255,226,170,0.95)');
+    glow.addColorStop(0.25, 'rgba(255,196,120,0.55)');
+    glow.addColorStop(1, 'rgba(255,180,100,0)');
+    sg.fillStyle = glow; sg.fillRect(0, 0, 1024, 512);
+    const skyTex = new THREE.CanvasTexture(sc);
+    skyTex.colorSpace = THREE.SRGBColorSpace;
+    scene.background = skyTex;
+  }
+  /* warm haze: distant shores melt into the horizon light */
+  scene.fog = new THREE.Fog(0xd9b48e, 40, 92);
+
+  /* image-based ambience: a tiny equirect of the same sky, PMREM-blurred,
+     so water and hull paint pick up believable sky reflections */
+  {
+    const ec = document.createElement('canvas'); ec.width = 512; ec.height = 256;
+    const eg = ec.getContext('2d');
+    const grad = eg.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0, '#5d7d99');
+    grad.addColorStop(0.45, '#a8b6bd');
+    grad.addColorStop(0.55, '#f2c184');
+    grad.addColorStop(0.62, '#caa27a');
+    grad.addColorStop(1, '#24333d');
+    eg.fillStyle = grad; eg.fillRect(0, 0, 512, 256);
+    const sunBlob = eg.createRadialGradient(128, 138, 2, 128, 138, 60);
+    sunBlob.addColorStop(0, 'rgba(255,240,200,1)');
+    sunBlob.addColorStop(1, 'rgba(255,220,160,0)');
+    eg.fillStyle = sunBlob; eg.fillRect(0, 0, 512, 256);
+    const eqTex = new THREE.CanvasTexture(ec);
+    eqTex.mapping = THREE.EquirectangularReflectionMapping;
+    eqTex.colorSpace = THREE.SRGBColorSpace;
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromEquirectangular(eqTex).texture;
+    eqTex.dispose(); pmrem.dispose();
+  }
 
   const aspect = W / H;
-  const viewSize = 11.8;                      // ortho frustum height (world units)
+  const viewSize = 9.6;                      // ortho frustum height (world units)
   const camera = new THREE.OrthographicCamera(
-    -viewSize * aspect / 2, viewSize * aspect / 2, viewSize / 2, -viewSize / 2, 0.1, 200);
-  camera.position.set(16, 14, 16);
-  camera.lookAt(0.8, 0, -0.7);
+    -viewSize * aspect / 2, viewSize * aspect / 2, viewSize / 2, -viewSize / 2, 0.1, 220);
+  camera.position.set(15.5, 9.0, 15.5);
+  camera.lookAt(1.4, 0, -1.1);
 
-  /* lights */
-  scene.add(new THREE.HemisphereLight(0xd6ecff, 0x20303c, 0.95));
-  const sun = new THREE.DirectionalLight(0xfff1d6, 2.0);
-  sun.position.set(11, 22, 7);
+  /* lights — low warm sun across the strait (glint path toward camera),
+     cool sky fill from the camera side, long golden-hour shadows */
+  scene.add(new THREE.HemisphereLight(0x9db8cc, 0x4a4238, 0.78));
+  const sun = new THREE.DirectionalLight(0xffb36b, 2.4);
+  sun.position.set(-17, 13, -13);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -20; sun.shadow.camera.right = 20;
-  sun.shadow.camera.top = 20; sun.shadow.camera.bottom = -20;
-  sun.shadow.camera.far = 70;
-  sun.shadow.bias = -0.0006;
+  sun.shadow.camera.left = -22; sun.shadow.camera.right = 22;
+  sun.shadow.camera.top = 22; sun.shadow.camera.bottom = -22;
+  sun.shadow.camera.far = 90;
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.03;
   scene.add(sun);
-  const fill = new THREE.DirectionalLight(0x9fd0ff, 0.5);
-  fill.position.set(-14, 10, -8);
+  const fill = new THREE.DirectionalLight(0x7d94b0, 0.4);
+  fill.position.set(14, 9, 16);
   scene.add(fill);
 
   /* soft radial glow texture for fire / explosion sprites */
@@ -388,30 +487,179 @@ function init() {
     return s;
   }
 
-  /* water — glossy plane with a painted depth gradient */
+  /* irregular smoke puff: a cluster of soft blobs on one canvas, so a
+     sprite reads as a billowing cloud of smoke, not a grey ball */
+  function puffTexture(seed, dark) {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d');
+    const rng = mulberry32(seed);
+    for (let i = 0; i < 26; i++) {
+      const x = 28 + rng() * 72, y = 34 + rng() * 60, r = 12 + rng() * 27;
+      const tone = dark ? 0.55 + rng() * 0.45 : 0.75 + rng() * 0.25;
+      const gr = g.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, `rgba(255,255,255,${0.42 * tone})`);
+      gr.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = gr;
+      g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+    }
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+  const smokeDarkTex = puffTexture(7101, true);
+  const smokeLiteTex = puffTexture(9202, false);
+  function smokeSprite(tex, color, scaleX, scaleY, opacity, rotation) {
+    const m = new THREE.SpriteMaterial({ map: tex, color, transparent: true,
+      opacity, rotation, depthWrite: false });
+    const s = new THREE.Sprite(m); s.scale.set(scaleX, scaleY, 1);
+    return s;
+  }
+
+  /* photographic clouds: a few soft sprites high over the far shore,
+     warm-lit on their sun side, dissolving into the haze */
+  {
+    const cloudTex = puffTexture(5150, false);
+    const cloudCols = [0xf6ddba, 0xeed3ae, 0xe6cba6, 0xf2d8bc];
+    [[-13, 8.6, -13, 11, 5.2], [-4, 9.4, -15, 14, 6.0], [6, 8.8, -14, 10, 4.6],
+     [13.5, 9.8, -12, 12, 5.4], [-9, 10.6, -17, 16, 6.4]].forEach(([x, y, z, sx, sy], i) => {
+      const s = smokeSprite(cloudTex, cloudCols[i % 4], sx, sy, 0.34 + (i % 3) * 0.07, i * 0.7);
+      s.position.set(x, y, z);
+      scene.add(s);
+    });
+  }
+
+  /* ---- water: a real sea — perturbed normals, sky reflection, sun glint ----
+     Colour, normal and roughness maps are all painted procedurally from
+     seeded noise, so the surface breaks the low sun into a glint path
+     instead of reading as a flat blue card. */
+  const waterRng = mulberry32(20261117);
   const wc = document.createElement('canvas'); wc.width = wc.height = 512;
-  const g2 = wc.getContext('2d');
-  const grad = g2.createRadialGradient(235, 215, 40, 256, 256, 360);
-  grad.addColorStop(0, '#1b7d9d'); grad.addColorStop(0.55, '#11607f'); grad.addColorStop(1, '#082f47');
-  g2.fillStyle = grad; g2.fillRect(0, 0, 512, 512);
+  {
+    const g2 = wc.getContext('2d');
+    mottle(g2, 512, '#1a4256', [
+      ['#14384a', 0.18, 40, 130, 26],
+      ['#2a6076', 0.13, 30, 100, 22],
+      ['#102e40', 0.16, 50, 150, 18],
+      ['#37748c', 0.08, 16, 50, 26],
+    ], waterRng, ['#eaf6ff', 0.3, 380, 3.0]);   // sparse whitecap flecks
+  }
   const waterTex = new THREE.CanvasTexture(wc);
   waterTex.colorSpace = THREE.SRGBColorSpace;
-  const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(95, 95),
-    new THREE.MeshStandardMaterial({ map: waterTex, roughness: 0.32, metalness: 0.08 }));
+  waterTex.wrapS = waterTex.wrapT = THREE.RepeatWrapping;
+  waterTex.repeat.set(3, 3);
+
+  /* normal map from a tileable value-noise heightfield — organic,
+     multi-scale chop instead of regular sine interference */
+  function noiseHeightfield(size, seed) {
+    const rng = mulberry32(seed);
+    const h = new Float32Array(size * size);
+    for (const [cells, amp] of [[6, 0.42], [12, 0.26], [24, 0.16], [48, 0.1], [96, 0.06]]) {
+      const grid = new Float32Array(cells * cells);
+      for (let i = 0; i < grid.length; i++) grid[i] = rng();
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+        const gx = x / size * cells, gy = y / size * cells;
+        const x0 = Math.floor(gx) % cells, y0 = Math.floor(gy) % cells;
+        const x1 = (x0 + 1) % cells, y1 = (y0 + 1) % cells;
+        const fx = gx - Math.floor(gx), fy = gy - Math.floor(gy);
+        const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+        h[y * size + x] += ((grid[y0 * cells + x0] * (1 - sx) + grid[y0 * cells + x1] * sx) * (1 - sy)
+          + (grid[y1 * cells + x0] * (1 - sx) + grid[y1 * cells + x1] * sx) * sy) * amp;
+      }
+    }
+    return h;
+  }
+  const nc = document.createElement('canvas'); nc.width = nc.height = 256;
+  {
+    const g2 = nc.getContext('2d');
+    const img = g2.createImageData(256, 256);
+    const hgt = noiseHeightfield(256, 60606);
+    const S = 2.6;
+    const H = (x, y) => hgt[((y + 256) % 256) * 256 + ((x + 256) % 256)];
+    for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) {
+      const dx = (H(x + 1, y) - H(x - 1, y)) * S;
+      const dy = (H(x, y + 1) - H(x, y - 1)) * S;
+      const inv = 1 / Math.hypot(dx, dy, 1);
+      const i = (y * 256 + x) * 4;
+      img.data[i] = (-dx * inv * 0.5 + 0.5) * 255;
+      img.data[i + 1] = (dy * inv * 0.5 + 0.5) * 255;
+      img.data[i + 2] = (inv * 0.5 + 0.5) * 255;
+      img.data[i + 3] = 255;
+    }
+    g2.putImageData(img, 0, 0);
+  }
+  const waterNrm = new THREE.CanvasTexture(nc);
+  waterNrm.wrapS = waterNrm.wrapT = THREE.RepeatWrapping;
+  waterNrm.repeat.set(20, 20);
+
+  const rc = document.createElement('canvas'); rc.width = rc.height = 256;
+  {
+    const g2 = rc.getContext('2d');
+    mottle(g2, 256, '#b4b4b4', [
+      ['#7a7a7a', 0.6, 20, 70, 22],
+      ['#e2e2e2', 0.55, 14, 46, 20],
+      ['#969696', 0.5, 26, 90, 14],
+    ], waterRng, null);
+  }
+  const waterRgh = new THREE.CanvasTexture(rc);
+  waterRgh.wrapS = waterRgh.wrapT = THREE.RepeatWrapping;
+  waterRgh.repeat.set(5, 5);
+
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(88, 88),
+    new THREE.MeshStandardMaterial({
+      map: waterTex, normalMap: waterNrm, normalScale: new THREE.Vector2(0.26, 0.26),
+      roughnessMap: waterRgh, roughness: 0.6, metalness: 0.04, envMapIntensity: 0.32 }));
   water.rotation.x = -Math.PI / 2;
   water.position.y = 0.35;
   water.receiveShadow = true;
   scene.add(water);
 
+  /* wake trails: a foam-textured plane laid behind a moving vessel —
+     churned centre, spreading V arms, fading tail */
+  const wakeTex = (() => {
+    const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+    const g = c.getContext('2d');
+    const rng = mulberry32(4477);
+    for (let i = 0; i < 900; i++) {
+      const t = rng();                                   // 0 tail → 1 stern
+      const spread = 3 + Math.pow(t, 1.6) * 46;
+      const y = 64 + (rng() * 2 - 1) * spread;
+      const a = 0.05 + t * 0.5 * rng();
+      g.fillStyle = `rgba(238,248,255,${a})`;
+      g.fillRect(t * 250, y, 2 + rng() * 7, 1.4);
+    }
+    for (const sgn of [-1, 1]) {                          // the V arms
+      g.strokeStyle = 'rgba(240,250,255,0.55)'; g.lineWidth = 2.4;
+      g.beginPath(); g.moveTo(6, 64);
+      g.quadraticCurveTo(140, 64 + sgn * 26, 252, 64 + sgn * 47); g.stroke();
+      g.strokeStyle = 'rgba(240,250,255,0.25)'; g.lineWidth = 5;
+      g.beginPath(); g.moveTo(6, 64);
+      g.quadraticCurveTo(140, 64 + sgn * 26, 252, 64 + sgn * 47); g.stroke();
+    }
+    const t2 = new THREE.CanvasTexture(c); t2.colorSpace = THREE.SRGBColorSpace;
+    return t2;
+  })();
+  function addWake(vessel, len, wid, opacity) {
+    const geo = new THREE.PlaneGeometry(len, wid);
+    geo.rotateX(-Math.PI / 2);
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      map: wakeTex, transparent: true, opacity, depthWrite: false }));
+    const ry = vessel.rotation.y;
+    const fwd = new THREE.Vector3(Math.cos(ry), 0, -Math.sin(ry));
+    const stern = vessel.position.clone().addScaledVector(fwd, -1.95 * vessel.scale.x);
+    m.position.copy(stern).addScaledVector(fwd, -len / 2 + 0.4);
+    m.position.y = 0.385;
+    m.rotation.y = ry;
+    scene.add(m);
+    return m;
+  }
+
   /* shipping lane — translucent strip, dashed centreline, buoys */
   const lane = new THREE.Mesh(new THREE.PlaneGeometry(30, 1.5),
-    new THREE.MeshBasicMaterial({ color: 0x3fa9cc, transparent: true, opacity: 0.22 }));
+    new THREE.MeshBasicMaterial({ color: 0x9fd4e8, transparent: true, opacity: 0.07 }));
   lane.rotation.x = -Math.PI / 2;
   lane.rotation.z = 0.045;
   lane.position.set(1.5, 0.365, -1.05);
   scene.add(lane);
-  const dashMat = new THREE.MeshBasicMaterial({ color: 0xbfe6f5, transparent: true, opacity: 0.65 });
+  const dashMat = new THREE.MeshBasicMaterial({ color: 0xbfe6f5, transparent: true, opacity: 0.3 });
   for (let i = 0; i < 11; i++) {
     const d = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 0.09), dashMat);
     d.rotation.x = -Math.PI / 2; d.rotation.z = 0.045;
@@ -424,18 +672,63 @@ function init() {
     b.position.set(x, 0.42, z); b.castShadow = true; scene.add(b);
   });
 
-  /* land — extruded stylised coastline blocks (shape +y = north) */
-  const sandTop = new THREE.MeshStandardMaterial({ color: 0xdcbc7d, roughness: 0.95 });
-  const sandSide = new THREE.MeshStandardMaterial({ color: 0x7d5c33, roughness: 1 });
-  const rockTop = new THREE.MeshStandardMaterial({ color: 0xcbb27f, roughness: 0.95 });
-  function land(points, topMat) {
+  /* land — extruded coastlines with painted terrain: pale shore sand,
+     sun-baked rock inland, sparse scrub green, and a low beach shelf
+     peeking out of the water around every shore */
+  const landRng = mulberry32(90210);
+  const terrC = document.createElement('canvas'); terrC.width = terrC.height = 512;
+  mottle(terrC.getContext('2d'), 512, '#c8ad76', [
+    ['#a5854f', 0.6, 30, 110, 34],
+    ['#8a6a3e', 0.5, 20, 80, 28],
+    ['#e0c48c', 0.5, 24, 90, 24],
+    ['#71804a', 0.34, 10, 42, 34],
+    ['#77582f', 0.46, 8, 30, 46],
+  ], landRng, ['#54401f', 0.4, 1400, 2.4]);
+  const terrTex = new THREE.CanvasTexture(terrC);
+  terrTex.colorSpace = THREE.SRGBColorSpace;
+  terrTex.wrapS = terrTex.wrapT = THREE.RepeatWrapping;
+  /* extrude tops use shape coordinates as UVs: scale them into 0..1
+     across the 36-unit world so the painting lands at terrain scale */
+  terrTex.repeat.set(1 / 36, 1 / 36);
+  terrTex.offset.set(0.5, 0.5);
+  const terrTop = new THREE.MeshStandardMaterial({
+    map: terrTex, color: 0xf7f1e3, roughness: 0.97, metalness: 0, envMapIntensity: 0.1 });
+  const cliffC = document.createElement('canvas'); cliffC.width = cliffC.height = 256;
+  mottle(cliffC.getContext('2d'), 256, '#8a6a42', [
+    ['#6e5230', 0.55, 16, 60, 26],
+    ['#a07c4e', 0.45, 12, 44, 22],
+    ['#54401f', 0.40, 8, 26, 30],
+  ], landRng, null);
+  const cliffTex = new THREE.CanvasTexture(cliffC);
+  cliffTex.colorSpace = THREE.SRGBColorSpace;
+  cliffTex.wrapS = cliffTex.wrapT = THREE.RepeatWrapping;
+  const cliffSide = new THREE.MeshStandardMaterial({
+    map: cliffTex, roughness: 1, metalness: 0, envMapIntensity: 0.08 });
+  const beachMat = new THREE.MeshStandardMaterial({
+    color: 0xe3cd9c, roughness: 1, metalness: 0, envMapIntensity: 0.1 });
+  function landShape(points) {
     const shape = new THREE.Shape();
     shape.moveTo(points[0][0], points[0][1]);
     for (let i = 1; i < points.length; i++) shape.lineTo(points[i][0], points[i][1]);
     shape.closePath();
-    const geo = new THREE.ExtrudeGeometry(shape, {
+    return shape;
+  }
+  function land(points, topMat) {
+    /* beach shelf: the same outline swollen ~6% about its centroid,
+       sitting low so a pale sand rim breaks the waterline */
+    const cx = points.reduce((s, p) => s + p[0], 0) / points.length;
+    const cy = points.reduce((s, p) => s + p[1], 0) / points.length;
+    const swollen = points.map(([x, y]) => [cx + (x - cx) * 1.07, cy + (y - cy) * 1.07]);
+    const shelf = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(landShape(swollen), {
+        depth: 0.3, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.14, bevelSegments: 1 }),
+      [beachMat, beachMat]);
+    shelf.rotation.x = -Math.PI / 2;
+    shelf.receiveShadow = true;
+    scene.add(shelf);
+    const geo = new THREE.ExtrudeGeometry(landShape(points), {
       depth: 0.9, bevelEnabled: true, bevelThickness: 0.1, bevelSize: 0.1, bevelSegments: 1 });
-    const mesh = new THREE.Mesh(geo, [topMat, sandSide]);
+    const mesh = new THREE.Mesh(geo, [topMat, cliffSide]);
     mesh.rotation.x = -Math.PI / 2;
     mesh.castShadow = true; mesh.receiveShadow = true;
     scene.add(mesh);
@@ -443,13 +736,15 @@ function init() {
   }
   // IRAN — northern shore
   land([[-17, 9.5], [-17, 2.6], [-11, 3.4], [-6, 2.6], [-1, 3.2], [3, 2.5], [6.5, 3.1],
-        [10, 2.4], [13, 3.2], [17, 2.7], [17, 9.5]], sandTop);
+        [10, 2.4], [13, 3.2], [17, 2.7], [17, 9.5]], terrTop);
   // ARABIA / OMAN — southern shore, Musandam bump reaching toward the strait
   land([[-17, -9.5], [-17, -1.4], [-12, -1.0], [-8, -1.6], [-4, -0.9], [0, -1.5],
-        [4, -1.1], [8, -1.7], [11.5, -1.2], [13.2, -0.1], [14.6, -1.1], [17, -1.5], [17, -9.5]], rockTop);
-  // QESHM ISLAND — long island hugging Iran's coast in the strait
+        [4, -1.1], [8, -1.7], [11.5, -1.2], [13.2, -0.1], [14.6, -1.1], [17, -1.5], [17, -9.5]], terrTop);
+  // QESHM ISLAND — long island hugging Iran's coast in the strait;
+  // its top takes a paler tint so it reads as its own landmass
+  const qeshmTop = terrTop.clone(); qeshmTop.color = new THREE.Color(0xfff6e0);
   const qeshm = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.12, 0.9, 24),
-    [sandSide, sandTop, sandSide]);
+    [cliffSide, qeshmTop, cliffSide]);
   qeshm.scale.set(2.6, 1, 0.8);
   qeshm.position.set(8.4, 0.45, -2.05);
   qeshm.castShadow = true; qeshm.receiveShadow = true;
@@ -472,7 +767,7 @@ function init() {
 
   /* ---- Bandar Abbas port: gantry cranes, warehouses, container stacks ---- */
   const port = new THREE.Group();
-  const craneMat = std(0x2c343c, 0.55, 0.35);
+  const craneMat = std(0x4a545e, 0.55, 0.35);
   function gantryCrane(x) {
     const c = new THREE.Group();
     box(0.1, 1.55, 0.1, craneMat, -0.55, 0.78, 0, c);
@@ -502,24 +797,61 @@ function init() {
   scene.add(port);
 
   /* low mesas inland + a small coastal town, to break up the empty shores */
-  const mesaMat = [sandSide, sandTop, sandSide];
-  [[-8.5, -5.6, 1.6, 0.5], [13.5, -5.2, 1.2, 0.4], [-12.5, 3.8, 1.4, 0.4], [6, 4.6, 1.0, 0.3]].forEach(([x, z, r, h]) => {
+  const mesaMat = [cliffSide, terrTop, cliffSide];
+  [[-8.5, -5.6, 1.6, 0.5], [13.5, -5.2, 1.2, 0.4], [-12.5, 3.8, 1.4, 0.4], [6, 4.6, 1.0, 0.3]].forEach(([x, z, r, h], i) => {
     const mesa = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.82, r, h, 18), mesaMat);
     mesa.position.set(x, 0.95 + h / 2, z);
+    mesa.scale.set(1.3, 1, 0.82);
+    mesa.rotation.y = i * 1.35 + 0.4;
     mesa.castShadow = true; mesa.receiveShadow = true;
     scene.add(mesa);
   });
   const town = new THREE.Group();
-  const townCols = [0xe8e0cc, 0xd8cdb2, 0xefe8d8, 0xcfc0a0];
-  [[2.3, -3.35, 0.3], [2.75, -3.6, 0.22], [3.2, -3.3, 0.36], [3.65, -3.65, 0.26],
-   [4.1, -3.35, 0.3], [2.5, -3.95, 0.2], [3.45, -3.95, 0.24], [4.35, -3.7, 0.2]].forEach(([x, z, h], i) => {
+  const townCols = [0xa08b66, 0x8f7c5c, 0xb3a284, 0x87755a];
+  [[2.3, -3.35, 0.24], [2.62, -3.55, 0.17], [3.2, -3.3, 0.3], [3.55, -3.6, 0.2],
+   [4.05, -3.35, 0.26], [2.5, -3.85, 0.15], [3.4, -3.9, 0.19], [4.3, -3.65, 0.16]].forEach(([x, z, h], i) => {
     box(0.3, h, 0.28, std(townCols[i % 4], 0.9), x, h / 2, z, town);
   });
   town.position.set(0, 0.98, 0);
+  town.traverse(o => { if (o.isMesh) o.material.envMapIntensity = 0.3; });
   scene.add(town);
 
   /* ---- tankers ---- */
   const glassMat = std(0x1d2c3a, 0.25, 0.4);
+  /* weathered hull paint: mottled base, rust streaks bleeding down from
+     the deck edge, a dark tide-mark along the waterline */
+  function hullTexture(hullHex, seed) {
+    const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+    const g = c.getContext('2d');
+    const rng = mulberry32(seed);
+    const base = '#' + hullHex.toString(16).padStart(6, '0');
+    g.fillStyle = base; g.fillRect(0, 0, 256, 64);
+    for (let i = 0; i < 22; i++) {                       // patchy fading / grime
+      const x = rng() * 256, y = rng() * 64, r = 8 + rng() * 30;
+      const gr = g.createRadialGradient(x, y, 0, x, y, r);
+      const dark = rng() > 0.35;
+      gr.addColorStop(0, dark ? 'rgba(0,0,0,0.17)' : 'rgba(255,255,255,0.07)');
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+    }
+    for (let i = 0; i < 26; i++) {                       // rust weep streaks
+      const x = rng() * 256, len = 12 + rng() * 30, w = 1 + rng() * 2.4;
+      const gr = g.createLinearGradient(0, 0, 0, len);
+      gr.addColorStop(0, 'rgba(112,56,26,0.5)');
+      gr.addColorStop(1, 'rgba(112,56,26,0)');
+      g.fillStyle = gr; g.fillRect(x, 0, w, len);
+    }
+    const grime = g.createLinearGradient(0, 44, 0, 64);
+    grime.addColorStop(0, 'rgba(10,14,12,0)');
+    grime.addColorStop(1, 'rgba(10,14,12,0.55)');
+    g.fillStyle = grime; g.fillRect(0, 44, 256, 20);
+    g.fillStyle = 'rgba(240,244,238,0.35)'; g.fillRect(0, 1, 256, 2);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = THREE.RepeatWrapping;
+    return t;
+  }
+  let tankerSeed = 3100;
   function makeTanker({ hull = 0x8a3324, deck = 0x6e5a44, scale = 1, burning = false }) {
     const grp = new THREE.Group();
     // hull — extruded plan shape (pointed bow at +x)
@@ -528,9 +860,12 @@ function init() {
     s.quadraticCurveTo(1.55, -0.3, 1.8, 0);
     s.quadraticCurveTo(1.55, 0.3, 1.05, 0.4);
     s.lineTo(-1.7, 0.4); s.quadraticCurveTo(-1.86, 0, -1.7, -0.4);
+    const hullSideMat = new THREE.MeshStandardMaterial({
+      map: hullTexture(hull, tankerSeed += 17), roughness: 0.58, metalness: 0.22,
+      envMapIntensity: 0.55 });
     const hullMesh = new THREE.Mesh(
       new THREE.ExtrudeGeometry(s, { depth: 0.4, bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.04, bevelSegments: 1 }),
-      [std(deck, 0.9), std(hull, 0.62, 0.12)]);
+      [std(deck, 0.9), hullSideMat]);
     hullMesh.rotation.x = -Math.PI / 2;
     hullMesh.castShadow = true; hullMesh.receiveShadow = true;
     grp.add(hullMesh);
@@ -556,22 +891,39 @@ function init() {
     grp.scale.setScalar(scale);
     grp.position.y = 0.16;
     if (burning) {
-      // flames: nested cones amidships
-      const flameCols = [0xff7b1c, 0xffb03a, 0xffe9a8];
-      [[0.05, 1.15, 0.34], [0.5, 1.5, 0.44], [0.88, 0.95, 0.28]].forEach(([x, h, r], i) => {
-        const f = new THREE.Mesh(new THREE.ConeGeometry(r, h, 10),
-          new THREE.MeshBasicMaterial({ color: flameCols[i % 3] }));
-        f.position.set(x, 0.5 + h / 2, 0); grp.add(f);
-      });
-      const glow = glowSprite(fireGlowTex, 3.4, 0.8);
-      glow.position.set(0.45, 1.3, 0); grp.add(glow);
+      /* fire as layered light, not cones: a hot core, two additive glows,
+         and its shimmer smeared across the water beneath the hull */
+      const core = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 10),
+        new THREE.MeshBasicMaterial({ color: 0xffd9a0 }));
+      core.position.set(0.45, 0.78, 0); grp.add(core);
+      const glow1 = glowSprite(fireGlowTex, 1.9, 0.95);
+      glow1.position.set(0.45, 1.0, 0); grp.add(glow1);
+      const glow2 = glowSprite(fireGlowTex, 3.6, 0.5);
+      glow2.position.set(0.45, 1.25, 0); grp.add(glow2);
       const fire = new THREE.PointLight(0xff8c3a, 60, 15, 1.8);
       fire.position.set(0.45, 1.5, 0); grp.add(fire);
-      // smoke: grey spheres drifting up and back
-      const smokeMat = new THREE.MeshBasicMaterial({ color: 0x5c666e, transparent: true, opacity: 0.55 });
-      [[0.3, 1.9, -0.15, 0.34], [0.05, 2.4, -0.4, 0.46], [-0.35, 2.95, -0.7, 0.6], [-0.8, 3.5, -1.0, 0.74]].forEach(([x, y, z, r]) => {
-        const sm = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), smokeMat);
-        sm.position.set(x, y, z); grp.add(sm);
+      const reflTex = glowTexture('rgba(255,140,50,0.9)', 'rgba(255,90,20,0)');
+      const refl = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 2.3),
+        new THREE.MeshBasicMaterial({ map: reflTex, transparent: true, opacity: 0.5,
+          blending: THREE.AdditiveBlending, depthWrite: false }));
+      refl.rotation.x = -Math.PI / 2;
+      refl.position.set(0.35, 0.23, 0);
+      grp.add(refl);
+      /* smoke column: stacked puffs rising and drifting downwind,
+         near-black at the base, dissolving to pale grey at the top */
+      const smokePath = [
+        [0.42, 1.35, 0.0, 1.3, 1.1, 0x1f1f23, 0.95],
+        [0.28, 1.95, -0.1, 1.8, 1.45, 0x2a2a2f, 0.92],
+        [0.05, 2.6, -0.22, 2.3, 1.8, 0x3a3a40, 0.86],
+        [-0.25, 3.3, -0.35, 2.9, 2.2, 0x515158, 0.78],
+        [-0.6, 4.05, -0.5, 3.4, 2.6, 0x707078, 0.66],
+        [-1.0, 4.8, -0.66, 4.0, 3.0, 0x8f8f96, 0.54],
+        [-1.5, 5.5, -0.8, 4.6, 3.4, 0xa8a8ae, 0.42],
+      ];
+      smokePath.forEach(([x, y, z, sx, sy, col, op], i) => {
+        const sp = smokeSprite(i < 3 ? smokeDarkTex : smokeLiteTex,
+          col, sx, sy, op, i * 0.83);
+        sp.position.set(x, y, z); grp.add(sp);
       });
     }
     scene.add(grp);
@@ -583,15 +935,11 @@ function init() {
   const sailing = makeTanker({ hull: 0x2e5e4e, deck: 0x77684f, scale: 1.0 });
   sailing.position.set(10.6, 0.16, -0.55);
   sailing.rotation.y = -0.14;
-  // wake behind the sailing tanker
-  const wake = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 0.55),
-    new THREE.MeshBasicMaterial({ color: 0xdff2ff, transparent: true, opacity: 0.4 }));
-  wake.rotation.x = -Math.PI / 2; wake.rotation.z = -0.14;
-  wake.position.set(8.2, 0.37, -0.42);
-  scene.add(wake);
+  addWake(sailing, 4.6, 1.5, 0.75);
   const far = makeTanker({ hull: 0x4a4f57, deck: 0x555049, scale: 0.72 });
   far.position.set(-11.8, 0.16, -1.7);
   far.rotation.y = 0.22;
+  addWake(far, 3.4, 1.1, 0.55);
 
   /* ---- U.S. Navy destroyer ---- */
   const navy = new THREE.Group();
@@ -603,7 +951,7 @@ function init() {
     s.lineTo(-1.6, 0.28); s.quadraticCurveTo(-1.74, 0, -1.6, -0.28);
     const hullMesh = new THREE.Mesh(
       new THREE.ExtrudeGeometry(s, { depth: 0.34, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.03, bevelSegments: 1 }),
-      [std(0x49525c, 0.7), std(0x5a6672, 0.55, 0.3)]);
+      [std(0x59646f, 0.7), std(0x6b7885, 0.55, 0.3)]);
     hullMesh.rotation.x = -Math.PI / 2;
     hullMesh.castShadow = true; hullMesh.receiveShadow = true;
     navy.add(hullMesh);
@@ -625,24 +973,25 @@ function init() {
     navy.position.set(-6.4, 0.2, 0.9);
     navy.rotation.y = 0.38;
     scene.add(navy);
+    addWake(navy, 3.8, 1.15, 0.65);
   }
 
-  /* ---- explosions on the Iranian coast ---- */
+  /* ---- explosions on the Iranian coast: a flash, then a dirty
+     smoke puff climbing off the shoreline ---- */
   function explosion(x, y, z, s) {
     const grp = new THREE.Group();
-    const core = new THREE.Mesh(new THREE.SphereGeometry(0.5, 16, 12),
-      new THREE.MeshBasicMaterial({ color: 0xff7b1c }));
-    grp.add(core);
-    const mid = new THREE.Mesh(new THREE.SphereGeometry(0.33, 14, 10),
-      new THREE.MeshBasicMaterial({ color: 0xffb03a }));
-    mid.position.set(0.22, 0.28, 0.08); grp.add(mid);
-    const hot = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 8),
-      new THREE.MeshBasicMaterial({ color: 0xffe9a8 }));
-    hot.position.set(-0.1, 0.4, -0.06); grp.add(hot);
-    const glow = glowSprite(fireGlowTex, 2.6, 0.75);
-    glow.position.y = 0.3; grp.add(glow);
-    const light = new THREE.PointLight(0xff8c3a, 45, 12, 1.8);
-    light.position.y = 0.7; grp.add(light);
+    const flash = glowSprite(fireGlowTex, 1.5, 0.7);
+    flash.position.y = 0.25; grp.add(flash);
+    const core = glowSprite(fireGlowTex, 0.7, 0.9);
+    core.position.y = 0.15; grp.add(core);
+    const light = new THREE.PointLight(0xff8c3a, 26, 8.5, 1.8);
+    light.position.y = 0.6; grp.add(light);
+    [[0, 0.75, 0, 1.5, 1.15, 0x35322e, 0.8],
+     [-0.25, 1.45, -0.1, 2.1, 1.6, 0x5c574f, 0.62],
+     [-0.55, 2.2, -0.2, 2.8, 2.1, 0x8a8478, 0.45]].forEach(([px, py, pz, sx, sy, col, op], i) => {
+      const sp = smokeSprite(i === 0 ? smokeDarkTex : smokeLiteTex, col, sx, sy, op, i * 1.1);
+      sp.position.set(px, py, pz); grp.add(sp);
+    });
     grp.position.set(x, y, z); grp.scale.setScalar(s);
     scene.add(grp);
   }
@@ -652,9 +1001,9 @@ function init() {
   /* ---- glowing strike arcs + missiles ---- */
   function trajectory(pts, color) {
     const curve = new THREE.CatmullRomCurve3(pts.map(p => new THREE.Vector3(...p)));
-    const glowT = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, 0.13, 8),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22 }));
-    const coreT = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, 0.05, 8),
+    const glowT = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, 0.08, 8),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.15 }));
+    const coreT = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, 0.032, 8),
       new THREE.MeshBasicMaterial({ color }));
     scene.add(glowT); scene.add(coreT);
     return curve;
@@ -686,7 +1035,7 @@ function init() {
   /* ---- jets overhead ---- */
   function jet(x, y, z, ry, rz) {
     const j = new THREE.Group();
-    const mat = std(0x39424c, 0.45, 0.45);
+    const mat = std(0x4c565f, 0.45, 0.45);
     const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.09, 0.72, 4, 10), mat);
     body.rotation.z = Math.PI / 2; j.add(body);
     const wing = box(0.34, 0.03, 0.95, mat, -0.05, -0.02, 0, j);
@@ -695,12 +1044,32 @@ function init() {
     const fin = box(0.2, 0.22, 0.03, mat, -0.48, 0.12, 0, j);
     fin.rotation.z = 0.3;
     j.position.set(x, y, z); j.rotation.y = ry; j.rotation.z = rz;
-    j.scale.setScalar(1.5);
+    j.scale.setScalar(1.3);
     j.traverse(o => { if (o.isMesh) o.castShadow = true; });
     scene.add(j);
   }
   jet(-1.5, 4.8, -2.4, -0.25, 0.35);
   jet(6.2, 5.6, -4.0, -0.5, 0.3);
+
+  /* leader lines: project each label's anchor through the real camera,
+     so every dot lands exactly on its subject whatever the framing */
+  {
+    camera.updateMatrixWorld();
+    const anchors = [
+      ['Qeshm', new THREE.Vector3(9.6, 0.95, -2.6)],
+      ['Tanker', new THREE.Vector3(0.7, 1.0, -0.9)],
+      ['Port', new THREE.Vector3(9.8, 2.9, -3.2)],
+      ['Navy', new THREE.Vector3(-6.5, 0.75, 0.75)],
+    ];
+    for (const [name, p] of anchors) {
+      const v = p.project(camera);
+      const x = (v.x + 1) / 2 * W, y = (1 - v.y) / 2 * H;
+      const line = document.getElementById('ln' + name);
+      const dot = document.getElementById('dt' + name);
+      if (line) { line.setAttribute('x2', x.toFixed(1)); line.setAttribute('y2', y.toFixed(1)); }
+      if (dot) { dot.setAttribute('cx', x.toFixed(1)); dot.setAttribute('cy', y.toFixed(1)); }
+    }
+  }
 
   /* render a few frames so shadows settle, then flag readiness */
   let frames = 0;
